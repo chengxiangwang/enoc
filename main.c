@@ -74,68 +74,77 @@ void update_ugid_map(pid_t cpid){
     snprintf(map_path,PATH_MAX,"/proc/%ld/gid_map",(long)cpid);
     update_map(map_buf,map_path);
 }
+int run_container(){
+    struct container_t container = {
+        .cname = "container_001",
+        .init_args = {
+            "/bin/bash",
+            NULL,
+        },
+    };
+    if(pipe(container.syncfd) == -1)
+        ERR_EXIT("create syncfd error.");
+
+    pid_t cpid = clone(container_run,container.stack + STACK_SIZE,CLONE_FLAGS,&container);
+    if (cpid == -1){
+        ERR_EXIT("clone child error.");
+    }
+    printf("main: cloned container pid:%d\n",cpid);
+    update_ugid_map(cpid); 
+    close(container.syncfd[1]); 
+
+    return waitpid(cpid,NULL,0);
+
+}
+int exec_container(pid_t container_pid) {
+
+    int nstype_size = 6;
+    char *nstypes[] = {
+        "user",
+        "net",
+        "ipc",
+        "uts",
+        "pid",
+        "mnt",
+    };
+    for(int i=0;i<nstype_size;i++){
+        char ns_path[PATH_MAX];
+        int ns_fd;
+        snprintf(ns_path,PATH_MAX,"/proc/%d/ns/%s",container_pid,nstypes[i]);
+        if((ns_fd = open(ns_path,O_RDONLY)) == -1){
+            printf("open fd %s error.\n",ns_path);
+            continue;
+        }
+        if(setns(ns_fd,0) == -1){
+            perror("setns error.");
+            continue;
+        }
+    }
+    pid_t cpid = fork();
+    if(cpid == -1){
+        ERR_EXIT("failed fork child");
+    }
+    if(cpid == 0){
+        char *args[]= {
+            "/bin/bash",
+            NULL,
+        };
+        execv(args[0],args);
+    }else{
+      return waitpid(cpid,NULL,0); 
+    }
+    return 0;
+}
 
 int main(int argc,char **argv){
     if(argc < 2)
-        ERR_EXIT("Usage: enoc run|exec");
+        ERR_EXIT("Usage: enoc run|exec container_pid");
     if(strcmp(argv[1],"run") == 0){
-        struct container_t container = {
-            .cname = "container_001",
-            .init_args = {
-                "/bin/bash",
-                NULL,
-            },
-        };
-        if(pipe(container.syncfd) == -1)
-            ERR_EXIT("create syncfd error.");
-
-        pid_t cpid = clone(container_run,container.stack + STACK_SIZE,CLONE_FLAGS,&container);
-        if (cpid == -1){
-            ERR_EXIT("clone child error.");
-        }
-        printf("main: cloned container pid:%d\n",cpid);
-        update_ugid_map(cpid); 
-        close(container.syncfd[1]); 
-
-        waitpid(cpid,NULL,0);
+        return run_container();
     }
     if(strcmp(argv[1],"exec") == 0){
         pid_t container_pid = atoi(argv[2]);
-        int nstype_size = 6;
-        char *nstypes[] = {
-            "user",
-            "net",
-            "ipc",
-            "uts",
-            "pid",
-            "mnt",
-        };
-        for(int i=0;i<nstype_size;i++){
-            char ns_path[PATH_MAX];
-            int ns_fd;
-            snprintf(ns_path,PATH_MAX,"/proc/%d/ns/%s",container_pid,nstypes[i]);
-            if((ns_fd = open(ns_path,O_RDONLY)) == -1){
-                printf("open fd %s error.\n",ns_path);
-                continue;
-            }
-            if(setns(ns_fd,0) == -1){
-                perror("setns error.");
-                continue;
-            }
-        }
-        pid_t cpid = fork();
-        if(cpid == -1){
-            ERR_EXIT("failed fork child");
-        }
-        if(cpid == 0){
-            char *args[]= {
-              "/bin/bash",
-              NULL,
-            };
-            execv(args[0],args);
-        }else{
-           waitpid(cpid,NULL,0); 
-        }
+        return exec_container(container_pid);
     }
     return 0;
 }
