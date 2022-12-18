@@ -106,6 +106,7 @@ int exec_container(pid_t container_pid) {
         "uts",
         "pid",
         "mnt",
+        "cgroup",
     };
     for(int i=0;i<nstype_size;i++){
         char ns_path[PATH_MAX];
